@@ -547,6 +547,20 @@
 				this.signaling.setRoom(this.activeRoom);
 			}
 
+			this.signaling.on('usersChanged', function(/* sessionIds */) {
+				// The list of users in the room has changed, need to refresh
+				// and call participants that are in the call now.
+				if (!self._participants) {
+					return;
+				}
+				self._participants.fetch({
+					success: function(data, response) {
+						var users = response.ocs.data;
+						self.signaling._trigger("usersInRoom", [users]);
+					}
+				});
+			});
+
 			this.initAudioVideoSettings(configuration);
 
 			if (token) {

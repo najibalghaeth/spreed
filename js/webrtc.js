@@ -117,9 +117,6 @@ var spreedPeerConnectionTable = [];
 		};
 
 		var signaling = OCA.SpreedMe.createSignalingConnection();
-		signaling.on('usersJoined', function(users) {
-			usersChanged(users, []);
-		});
 		signaling.on('usersLeft', function(users) {
 			usersChanged([], users);
 		});
@@ -146,6 +143,8 @@ var spreedPeerConnectionTable = [];
 			});
 
 			if (!selfInCall) {
+				// Own session is no longer in the call, disconnect from all others.
+				usersChanged([], previousUsersInRoom);
 				return;
 			}
 

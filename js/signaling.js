@@ -137,6 +137,36 @@
 		return defer;
 	};
 
+	SignalingBase.prototype.joinCall = function(token, callback) {
+		$.ajax({
+			url: OC.linkToOCS('apps/spreed/api/v1/call', 2) + token,
+			type: 'POST',
+			beforeSend: function (request) {
+				request.setRequestHeader('Accept', 'application/json');
+			},
+			success: function () {
+				this.currentCallToken = token;
+				// We send an empty call description to simplewebrtc since
+				// usersChanged (webrtc.js) will create/remove peer connections
+				// with call participants
+				var callDescription = {'clients': {}};
+				callback('', callDescription);
+			}.bind(this),
+			error: function () {
+				// Room not found or maintenance mode
+				OC.redirect(OC.generateUrl('apps/spreed'));
+			}.bind(this)
+		});
+	};
+
+	SignalingBase.prototype.leaveCall = function(token) {
+		$.ajax({
+			url: OC.linkToOCS('apps/spreed/api/v1/call', 2) + token,
+			method: 'DELETE',
+			async: false
+		});
+	};
+
 	// Connection to the internal signaling server provided by the app.
 	function InternalSignaling(/*settings*/) {
 		SignalingBase.prototype.constructor.apply(this, arguments);
@@ -281,36 +311,6 @@
 
 		$.ajax({
 			url: OC.linkToOCS('apps/spreed/api/v1/room', 2) + token + '/participants/active',
-			method: 'DELETE',
-			async: false
-		});
-	};
-
-	InternalSignaling.prototype.joinCall = function(token, callback) {
-		$.ajax({
-			url: OC.linkToOCS('apps/spreed/api/v1/call', 2) + token,
-			type: 'POST',
-			beforeSend: function (request) {
-				request.setRequestHeader('Accept', 'application/json');
-			},
-			success: function () {
-				this.currentCallToken = token;
-				// We send an empty call description to simplewebrtc since
-				// usersChanged (webrtc.js) will create/remove peer connections
-				// with call participants
-				var callDescription = {'clients': {}};
-				callback('', callDescription);
-			}.bind(this),
-			error: function () {
-				// Room not found or maintenance mode
-				OC.redirect(OC.generateUrl('apps/spreed'));
-			}.bind(this)
-		});
-	};
-
-	InternalSignaling.prototype.leaveCall = function(token) {
-		$.ajax({
-			url: OC.linkToOCS('apps/spreed/api/v1/call', 2) + token,
 			method: 'DELETE',
 			async: false
 		});
@@ -505,6 +505,7 @@
 		this.maxReconnectIntervalMs = 16000;
 		this.reconnectIntervalMs = this.initialReconnectIntervalMs;
 		this.joinedUsers = {};
+		this.rooms = [];
 		this.connect();
 	}
 
@@ -576,10 +577,10 @@
 					}
 					break;
 				case "room":
-					if (this.currentCallToken && data.room.roomid !== this.currentCallToken) {
-						this._trigger('roomChanged', [this.currentCallToken, data.room.roomid]);
+					if (this.currentRoomToken && data.room.roomid !== this.currentRoomToken) {
+						this._trigger('roomChanged', [this.currentRoomToken, data.room.roomid]);
 						this.joinedUsers = {};
-						this.currentCallToken = null;
+						this.currentRoomToken = null;
 					}
 					break;
 				case "event":
@@ -714,12 +715,17 @@
 			// so perform resync once.
 			this.internalSyncRooms();
 		}
-		if (!resumedSession && this.currentCallToken) {
-			this.joinCall(this.currentCallToken);
+		if (!resumedSession && this.currentRoomToken) {
+			this.joinRoom(this.currentRoomToken);
 		}
 	};
 
-	StandaloneSignaling.prototype.joinCall = function(token, callback) {
+	StandaloneSignaling.prototype.setRoom = function(/* room */) {
+		SignalingBase.prototype.setRoom.apply(this, arguments);
+		return this.internalSyncRooms();
+	};
+
+	StandaloneSignaling.prototype.joinRoom = function(token, callback) {
 		console.log("Join call", token);
 		this.doSend({
 			"type": "room",
@@ -733,7 +739,7 @@
 
 	StandaloneSignaling.prototype.joinResponseReceived = function(data, token, callback) {
 		console.log("Joined", data, token);
-		this.currentCallToken = token;
+		this.currentRoomToken = token;
 		if (this.roomCollection) {
 			// The list of rooms is not fetched from the server. Update ping
 			// of joined room so it gets sorted to the top.
@@ -752,8 +758,8 @@
 		}
 	};
 
-	StandaloneSignaling.prototype.leaveCall = function(token) {
-		console.log("Leave call", token);
+	StandaloneSignaling.prototype.leaveRoom = function(token) {
+		console.log("Leave room", token);
 		this.doSend({
 			"type": "room",
 			"room": {
@@ -767,7 +773,7 @@
 				this._trigger("usersLeft", [leftUsers]);
 			}
 			this.joinedUsers = {};
-			this.currentCallToken = null;
+			this.currentRoomToken = null;
 		}.bind(this));
 	};
 
@@ -820,6 +826,15 @@
 					this._trigger("usersLeft", [leftSessionIds]);
 				}
 				break;
+			case "change":
+				var changedUsers = data.event.change;
+				if (changedUsers.length) {
+					console.log("Users changed", changedUsers);
+					var sessionIds = _.pluck(changedUsers, "sessionid");
+					this._trigger("usersChanged", sessionIds);
+				}
+				this.internalSyncRooms();
+				break;
 			default:
 				console.log("Unknown room event", data);
 				break;
@@ -833,15 +848,32 @@
 	};
 
 	StandaloneSignaling.prototype.syncRooms = function() {
+		if (this.pending_sync) {
+			// A sync request is already in progress, don't start another one.
+			return this.pending_sync;
+		}
+
 		// Never manually sync rooms, will be done based on notifications
 		// from the signaling server.
 		var defer = $.Deferred();
-		defer.resolve([]);
+		defer.resolve(this.rooms);
 		return defer;
 	};
 
 	StandaloneSignaling.prototype.internalSyncRooms = function() {
-		return SignalingBase.prototype.syncRooms.apply(this, arguments);
+		if (this.pending_sync) {
+			// A sync request is already in progress, don't start another one.
+			return this.pending_sync;
+		}
+
+		var defer = $.Deferred();
+		this.pending_sync = SignalingBase.prototype.syncRooms.apply(this, arguments);
+		this.pending_sync.then(function(rooms) {
+			this.pending_sync = null;
+			this.rooms = rooms;
+			defer.resolve(rooms);
+		}.bind(this));
+		return defer;
 	};
 
 	StandaloneSignaling.prototype.processRoomListEvent = function(data) {
