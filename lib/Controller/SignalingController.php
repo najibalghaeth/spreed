@@ -26,6 +26,7 @@ namespace OCA\Spreed\Controller;
 use OCA\Spreed\Config;
 use OCA\Spreed\Exceptions\RoomNotFoundException;
 use OCA\Spreed\Manager;
+use OCA\Spreed\Participant;
 use OCA\Spreed\Room;
 use OCA\Spreed\Signaling\Messages;
 use OCP\AppFramework\Http;
@@ -325,11 +326,13 @@ class SignalingController extends OCSController {
 		return new JSONResponse($response);
 	}
 
-	private function backendRoom($room) {
-		$roomId = $room['roomid'];
-		$userId = $room['userid'];
+	private function backendRoom($roomRequest) {
+		$roomId = $roomRequest['roomid'];
+		$userId = $roomRequest['userid'];
+		$sessionId = $roomRequest['sessionid'];
+
 		try {
-			$room = $this->manager->getRoomForParticipantByToken($roomId, $userId);
+			$room = $this->manager->getRoomByToken($roomId);
 		} catch (RoomNotFoundException $e) {
 			return new JSONResponse([
 				'type' => 'error',
@@ -340,11 +343,48 @@ class SignalingController extends OCSController {
 			]);
 		}
 
+		$participant = null;
 		if (!empty($userId)) {
-			// Rooms get sorted by last ping time for users, so make sure to
-			// update when a user joins a room.
-			$room->ping($userId, '0', time());
+			// User trying to join room.
+			try {
+				$participant = $room->getParticipant($userId);
+			} catch (ParticipantNotFoundException $e) {
+				// Ignore, will check for public rooms later.
+			}
 		}
+
+		if (empty($participant)) {
+			// User was not invited to the room, only allow access if public room.
+			if ($room->getType() !== Room::PUBLIC_CALL) {
+				// Return generic error to avoid leaking which rooms exist.
+				return new JSONResponse([
+					'type' => 'error',
+					'error' => [
+						'code' => 'no_such_room',
+						'message' => 'The user is not invited to this room.',
+					],
+				]);
+			}
+
+			if (!empty($userId)) {
+				$room->addUsers([
+					'userId' => $userId,
+					'participantType' => Participant::USER_SELF_JOINED,
+					'sessionId' => $sessionId,
+				]);
+			} else {
+				$room->internalEnterRoomAsGuest($sessionId);
+			}
+		} else {
+			// TODO(fancycode): This will remove the user from other rooms
+			// he is currently in. Needs to get communicated to the signaling
+			// server.
+			$room->updateUserSessionId($userId, $sessionId);
+		}
+
+		// Rooms get sorted by last ping time for users, so make sure to
+		// update when a user joins a room.
+		$room->ping($userId, $sessionId, time());
 
 		$response = [
 			'type' => 'room',

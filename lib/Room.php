@@ -542,6 +542,26 @@ class Room {
 	}
 
 	/**
+	 * Update the session id of a user in the room. Returns true if the user
+	 * is in the room and was updated, otherwise false.
+	 *
+	 * @param string $userId
+	 * @param string $sessionId
+	 * @return bool
+	 */
+	public function updateUserSessionId($userId, $sessionId) {
+		$this->disconnectUserFromAllRooms($userId);
+
+		$query = $this->db->getQueryBuilder();
+		$query->update('talk_participants')
+			->set('sessionId', $query->createNamedParameter($sessionId))
+			->where($query->expr()->eq('roomId', $query->createNamedParameter($this->getId(), IQueryBuilder::PARAM_INT)))
+			->andWhere($query->expr()->eq('userId', $query->createNamedParameter($userId)));
+		$result = $query->execute();
+		return $result > 0;
+	}
+
+	/**
 	 * @param string $userId
 	 */
 	public function disconnectUserFromAllRooms($userId) {
@@ -580,19 +600,30 @@ class Room {
 		}
 
 		$sessionId = $this->secureRandom->generate(255);
-		while (!$this->db->insertIfNotExist('*PREFIX*talk_participants', [
-			'userId' => '',
-			'roomId' => $this->getId(),
-			'lastPing' => 0,
-			'sessionId' => $sessionId,
-			'participantType' => Participant::GUEST,
-		], ['sessionId'])) {
+		while (!$this->internalEnterRoomAsGuest($sessionId)) {
 			$sessionId = $this->secureRandom->generate(255);
 		}
 
 		$this->dispatcher->dispatch(self::class . '::postGuestEnterRoom', new GenericEvent($this));
 
 		return $sessionId;
+	}
+
+	/**
+	 * Try to insert new guest participant. Returns true on success, false if
+	 * the sesssion id already exists.
+	 *
+	 * @param string $sessionId
+	 * @return bool
+	 */
+	public function internalEnterRoomAsGuest($sessionId) {
+		return (bool) $this->db->insertIfNotExist('*PREFIX*talk_participants', [
+			'userId' => '',
+			'roomId' => $this->getId(),
+			'lastPing' => 0,
+			'sessionId' => $sessionId,
+			'participantType' => Participant::GUEST,
+		], ['sessionId']);
 	}
 
 	/**
