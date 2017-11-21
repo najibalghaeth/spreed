@@ -550,6 +550,11 @@ class Room {
 	 * @return bool
 	 */
 	public function updateUserSessionId($userId, $sessionId) {
+		if (!$userId) {
+			// Ignore requests for guest users.
+			return false;
+		}
+
 		$this->disconnectUserFromAllRooms($userId);
 
 		$query = $this->db->getQueryBuilder();
