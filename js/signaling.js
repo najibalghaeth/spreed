@@ -463,6 +463,7 @@
 		this.maxReconnectIntervalMs = 16000;
 		this.reconnectIntervalMs = this.initialReconnectIntervalMs;
 		this.joinedUsers = {};
+		this.rooms = [];
 		this.connect();
 	}
 
@@ -803,15 +804,32 @@
 	};
 
 	StandaloneSignaling.prototype.syncRooms = function() {
+		if (this.pending_sync) {
+			// A sync request is already in progress, don't start another one.
+			return this.pending_sync;
+		}
+
 		// Never manually sync rooms, will be done based on notifications
 		// from the signaling server.
 		var defer = $.Deferred();
-		defer.resolve([]);
+		defer.resolve(this.rooms);
 		return defer;
 	};
 
 	StandaloneSignaling.prototype.internalSyncRooms = function() {
-		return SignalingBase.prototype.syncRooms.apply(this, arguments);
+		if (this.pending_sync) {
+			// A sync request is already in progress, don't start another one.
+			return this.pending_sync;
+		}
+
+		var defer = $.Deferred();
+		this.pending_sync = SignalingBase.prototype.syncRooms.apply(this, arguments);
+		this.pending_sync.then(function(rooms) {
+			this.pending_sync = null;
+			this.rooms = rooms;
+			defer.resolve(rooms);
+		}.bind(this));
+		return defer;
 	};
 
 	StandaloneSignaling.prototype.processRoomListEvent = function(data) {
