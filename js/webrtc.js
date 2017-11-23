@@ -168,7 +168,7 @@ var spreedPeerConnectionTable = [];
 		signaling.on('usersLeft', function(users) {
 			users.forEach(function(user) {
 				delete usersInCallMapping[user];
-			})
+			});
 			usersChanged([], users);
 		});
 		signaling.on('usersChanged', function(users) {

@@ -185,7 +185,7 @@
 		});
 	};
 
-	SignalingBase.prototype._leaveRoomSuccess = function(token) {
+	SignalingBase.prototype._leaveRoomSuccess = function(/* token */) {
 		// Override in subclasses if necessary.
 	};
 
@@ -207,7 +207,7 @@
 		});
 	};
 
-	SignalingBase.prototype._joinCallSuccess = function(token) {
+	SignalingBase.prototype._joinCallSuccess = function(/* token */) {
 		// Override in subclasses if necessary.
 	};
 
@@ -234,7 +234,7 @@
 		});
 	};
 
-	SignalingBase.prototype._leaveCallSuccess = function(token) {
+	SignalingBase.prototype._leaveCallSuccess = function(/* token */) {
 		// Override in subclasses if necessary.
 	};
 
@@ -773,12 +773,12 @@
 		}.bind(this));
 	};
 
-	StandaloneSignaling.prototype._joinCallSuccess = function(token) {
+	StandaloneSignaling.prototype._joinCallSuccess = function(/* token */) {
 		// Update room list to fetch modified properties.
 		this.internalSyncRooms();
 	};
 
-	StandaloneSignaling.prototype._leaveCallSuccess = function(token) {
+	StandaloneSignaling.prototype._leaveCallSuccess = function(/* token */) {
 		// Update room list to fetch modified properties.
 		this.internalSyncRooms();
 	};
