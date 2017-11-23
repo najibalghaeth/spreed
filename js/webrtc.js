@@ -117,7 +117,6 @@ var spreedPeerConnectionTable = [];
 		var userMapping = {};
 		var selfInCall = false;
 		var sessionId;
-		console.log("Call changed", users, currentSessionId);
 		for (sessionId in users) {
 			if (!users.hasOwnProperty(sessionId)) {
 				continue;
@@ -128,7 +127,6 @@ var spreedPeerConnectionTable = [];
 			}
 
 			if (sessionId === currentSessionId) {
-				console.log("Self in call");
 				selfInCall = true;
 				continue;
 			}
@@ -143,14 +141,12 @@ var spreedPeerConnectionTable = [];
 			return;
 		}
 
-		console.log("In room", currentUsersInRoom, userMapping, previousUsersInRoom);
 		var newSessionIds = currentUsersInRoom.diff(previousUsersInRoom);
 		var disconnectedSessionIds = previousUsersInRoom.diff(currentUsersInRoom);
 		var newUsers = [];
 		newSessionIds.forEach(function(sessionId) {
 			newUsers.push(userMapping[sessionId]);
 		});
-		console.log("Changed", newUsers, disconnectedSessionIds);
 		if (newUsers.length || disconnectedSessionIds.length) {
 			usersChanged(newUsers, disconnectedSessionIds);
 		}
