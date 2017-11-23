@@ -208,11 +208,25 @@ class BackendNotifier{
 	 */
 	public function roomInCallChanged($room, $inCall, $sessionIds) {
 		$this->logger->info('Room in-call status changed: ' . $room->getToken() . ' ' . $inCall . ' ' . print_r($sessionIds, true));
+		$changed = [];
+		$participants = $room->getParticipants();
+		foreach ($participants['users'] as $userId => $participant) {
+			if (in_array($participant['sessionId'], $sessionIds)) {
+				$participant['userId'] = $userId;
+				$changed[] = $participant;
+			}
+		}
+		foreach ($participants['guests'] as $participant) {
+			if (in_array($participant['sessionId'], $sessionIds)) {
+				$changed[] = $participant;
+			}
+		}
+
 		$this->backendRequest('/api/v1/room/' . $room->getToken(), [
 			'type' => 'incall',
 			'incall' => [
 				'incall' => $inCall,
-				'sessionids' => $sessionIds,
+				'users' => $changed,
 			],
 		]);
 	}

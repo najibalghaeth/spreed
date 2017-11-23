@@ -25,6 +25,7 @@ namespace OCA\Spreed\Controller;
 
 use OCA\Spreed\Config;
 use OCA\Spreed\Exceptions\RoomNotFoundException;
+use OCA\Spreed\Exceptions\ParticipantNotFoundException;
 use OCA\Spreed\Manager;
 use OCA\Spreed\Participant;
 use OCA\Spreed\Room;
@@ -274,6 +275,9 @@ class SignalingController extends OCSController {
 			case 'room':
 				// Query information about a room.
 				return $this->backendRoom($message['room']);
+			case 'ping':
+				// Ping sessions connected to a room.
+				return $this->backendPing($message['ping']);
 			default:
 				return new JSONResponse([
 					'type' => 'error',
@@ -349,13 +353,15 @@ class SignalingController extends OCSController {
 			try {
 				$participant = $room->getParticipant($userId);
 			} catch (ParticipantNotFoundException $e) {
-				// Ignore, will check for public rooms later.
+				// Ignore, will check for public rooms below.
 			}
 		}
 
 		if (empty($participant)) {
-			// User was not invited to the room, only allow access if public room.
-			if ($room->getType() !== Room::PUBLIC_CALL) {
+			// User was not invited to the room, check for access to public room.
+			try {
+				$participant = $room->getParticipantBySession($sessionId);
+			} catch (ParticipantNotFoundException $e) {
 				// Return generic error to avoid leaking which rooms exist.
 				return new JSONResponse([
 					'type' => 'error',
@@ -365,21 +371,6 @@ class SignalingController extends OCSController {
 					],
 				]);
 			}
-
-			if (!empty($userId)) {
-				$room->addUsers([
-					'userId' => $userId,
-					'participantType' => Participant::USER_SELF_JOINED,
-					'sessionId' => $sessionId,
-				]);
-			} else {
-				$room->internalEnterRoomAsGuest($sessionId);
-			}
-		} else {
-			// TODO(fancycode): This will remove the user from other rooms
-			// he is currently in. Needs to get communicated to the signaling
-			// server.
-			$room->updateUserSessionId($userId, $sessionId);
 		}
 
 		// Rooms get sorted by last ping time for users, so make sure to
@@ -395,6 +386,38 @@ class SignalingController extends OCSController {
 					'name' => $room->getName(),
 					'type' => $room->getType(),
 				],
+			],
+		];
+		return new JSONResponse($response);
+	}
+
+	private function backendPing($request) {
+		try {
+			$room = $this->manager->getRoomByToken($request['roomid']);
+		} catch (RoomNotFoundException $e) {
+			return new JSONResponse([
+				'type' => 'error',
+				'error' => [
+					'code' => 'no_such_room',
+					'message' => 'No such room.',
+				],
+			]);
+		}
+
+		$now = time();
+		foreach ($request['entries'] as $entry) {
+			if (array_key_exists('userid', $entry)) {
+				$room->ping($entry['userid'], $entry['sessionid'], $now);
+			} else {
+				$room->ping('', $entry['sessionid'], $now);
+			}
+		}
+
+		$response = [
+			'type' => 'room',
+			'room' => [
+				'version' => '1.0',
+				'roomid' => $room->getToken(),
 			],
 		];
 		return new JSONResponse($response);

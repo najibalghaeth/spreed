@@ -137,6 +137,80 @@
 		return defer;
 	};
 
+	SignalingBase.prototype.joinRoom = function(token, password) {
+		$.ajax({
+			url: OC.linkToOCS('apps/spreed/api/v1/room', 2) + token + '/participants/active',
+			type: 'POST',
+			beforeSend: function (request) {
+				request.setRequestHeader('Accept', 'application/json');
+			},
+			data: {
+				password: password
+			},
+			success: function (result) {
+				console.log("Joined", result);
+				this.currentRoomToken = token;
+				this._joinRoomSuccess(token, result.ocs.data.sessionId);
+			}.bind(this),
+			error: function (result) {
+				if (result.status === 404 || result.status === 503) {
+					// Room not found or maintenance mode
+					OC.redirect(OC.generateUrl('apps/spreed'));
+				}
+
+				if (result.status === 403) {
+					// This should not happen anymore since we ask for the password before
+					// even trying to join the call, but let's keep it for now.
+					OC.dialogs.prompt(
+						t('spreed', 'Please enter the password for this call'),
+						t('spreed','Password required'),
+						function (result, password) {
+							if (result && password !== '') {
+								this.joinRoom(token, password);
+							}
+						}.bind(this),
+						true,
+						t('spreed','Password'),
+						true
+					).then(function() {
+						var $dialog = $('.oc-dialog:visible');
+						$dialog.find('.ui-icon').remove();
+
+						var $buttons = $dialog.find('button');
+						$buttons.eq(0).text(t('core', 'Cancel'));
+						$buttons.eq(1).text(t('core', 'Submit'));
+					});
+				}
+			}.bind(this)
+		});
+	};
+
+	SignalingBase.prototype._leaveRoomSuccess = function(token) {
+		// Override in subclasses if necessary.
+	};
+
+	SignalingBase.prototype.leaveRoom = function(token) {
+		this.leaveCurrentCall();
+		this._doLeaveRoom(token);
+
+		$.ajax({
+			url: OC.linkToOCS('apps/spreed/api/v1/room', 2) + token + '/participants/active',
+			method: 'DELETE',
+			async: false,
+			success: function () {
+				this._leaveRoomSuccess(token);
+				// We left the current room.
+				if (token === this.currentRoomToken) {
+					this.currentRoomToken = null;
+				}
+			}.bind(this)
+		});
+	};
+
+	SignalingBase.prototype._joinCallSuccess = function(token) {
+		// Override in subclasses if necessary.
+	};
+
 	SignalingBase.prototype.joinCall = function(token, callback) {
 		$.ajax({
 			url: OC.linkToOCS('apps/spreed/api/v1/call', 2) + token,
@@ -146,6 +220,7 @@
 			},
 			success: function () {
 				this.currentCallToken = token;
+				this._joinCallSuccess(token);
 				// We send an empty call description to simplewebrtc since
 				// usersChanged (webrtc.js) will create/remove peer connections
 				// with call participants
@@ -159,11 +234,22 @@
 		});
 	};
 
+	SignalingBase.prototype._leaveCallSuccess = function(token) {
+		// Override in subclasses if necessary.
+	};
+
 	SignalingBase.prototype.leaveCall = function(token) {
 		$.ajax({
 			url: OC.linkToOCS('apps/spreed/api/v1/call', 2) + token,
 			method: 'DELETE',
-			async: false
+			async: false,
+			success: function () {
+				this._leaveCallSuccess(token);
+				// We left the current call.
+				if (token === this.currentCallToken) {
+					this.currentCallToken = null;
+				}
+			}.bind(this)
 		});
 	};
 
@@ -249,71 +335,17 @@
 		return defer;
 	};
 
-	InternalSignaling.prototype.joinRoom = function(token, password) {
-		$.ajax({
-			url: OC.linkToOCS('apps/spreed/api/v1/room', 2) + token + '/participants/active',
-			type: 'POST',
-			beforeSend: function (request) {
-				request.setRequestHeader('Accept', 'application/json');
-			},
-			data: {
-				password: password
-			},
-			success: function (result) {
-				console.log("Joined", result);
-				this.sessionId = result.ocs.data.sessionId;
-				this.currentRoomToken = token;
-				this._startPingCall();
-				this._startPullingMessages();
-			}.bind(this),
-			error: function (result) {
-				if (result.status === 404 || result.status === 503) {
-					// Room not found or maintenance mode
-					OC.redirect(OC.generateUrl('apps/spreed'));
-				}
-
-				if (result.status === 403) {
-					// This should not happen anymore since we ask for the password before
-					// even trying to join the call, but let's keep it for now.
-					OC.dialogs.prompt(
-						t('spreed', 'Please enter the password for this call'),
-						t('spreed','Password required'),
-						function (result, password) {
-							if (result && password !== '') {
-								this.joinRoom(token, password);
-							}
-						}.bind(this),
-						true,
-						t('spreed','Password'),
-						true
-					).then(function() {
-						var $dialog = $('.oc-dialog:visible');
-						$dialog.find('.ui-icon').remove();
-
-						var $buttons = $dialog.find('button');
-						$buttons.eq(0).text(t('core', 'Cancel'));
-						$buttons.eq(1).text(t('core', 'Submit'));
-					});
-				}
-			}.bind(this)
-		});
+	InternalSignaling.prototype._joinRoomSuccess = function(token, sessionId) {
+		this.sessionId = sessionId;
+		this._startPingCall();
+		this._startPullingMessages();
 	};
 
-	InternalSignaling.prototype.leaveRoom = function(token) {
-		if (this.currentCallToken) {
-			this.leaveCall();
-		}
-
+	InternalSignaling.prototype._doLeaveRoom = function(token) {
 		if (token === this.currentRoomToken) {
 			this._stopPingCall();
 			this._closeEventSource();
 		}
-
-		$.ajax({
-			url: OC.linkToOCS('apps/spreed/api/v1/room', 2) + token + '/participants/active',
-			method: 'DELETE',
-			async: false
-		});
 	};
 
 	InternalSignaling.prototype.sendCallMessage = function(data) {
@@ -725,21 +757,34 @@
 		return this.internalSyncRooms();
 	};
 
-	StandaloneSignaling.prototype.joinRoom = function(token, callback) {
-		console.log("Join call", token);
+	StandaloneSignaling.prototype._joinRoomSuccess = function(token, nextcloudSessionId) {
+		console.log("Join room", token);
 		this.doSend({
 			"type": "room",
 			"room": {
-				"roomid": token
+				"roomid": token,
+				// Pass the Nextcloud session id to the signaling server. The
+				// session id will be passed through to Nextcloud to check if
+				// the (Nextcloud) user is allowed to join the room.
+				"sessionid": nextcloudSessionId,
 			}
 		}, function(data) {
-			this.joinResponseReceived(data, token, callback);
+			this.joinResponseReceived(data, token);
 		}.bind(this));
 	};
 
-	StandaloneSignaling.prototype.joinResponseReceived = function(data, token, callback) {
+	StandaloneSignaling.prototype._joinCallSuccess = function(token) {
+		// Update room list to fetch modified properties.
+		this.internalSyncRooms();
+	};
+
+	StandaloneSignaling.prototype._leaveCallSuccess = function(token) {
+		// Update room list to fetch modified properties.
+		this.internalSyncRooms();
+	};
+
+	StandaloneSignaling.prototype.joinResponseReceived = function(data, token) {
 		console.log("Joined", data, token);
-		this.currentRoomToken = token;
 		if (this.roomCollection) {
 			// The list of rooms is not fetched from the server. Update ping
 			// of joined room so it gets sorted to the top.
@@ -750,15 +795,9 @@
 			});
 			this.roomCollection.sort();
 		}
-		if (callback) {
-			var roomDescription = {
-				"clients": {}
-			};
-			callback('', roomDescription);
-		}
 	};
 
-	StandaloneSignaling.prototype.leaveRoom = function(token) {
+	StandaloneSignaling.prototype._doLeaveRoom = function(token) {
 		console.log("Leave room", token);
 		this.doSend({
 			"type": "room",
@@ -773,7 +812,6 @@
 				this._trigger("usersLeft", [leftUsers]);
 			}
 			this.joinedUsers = {};
-			this.currentRoomToken = null;
 		}.bind(this));
 	};
 
@@ -784,6 +822,9 @@
 				break;
 			case "roomlist":
 				this.processRoomListEvent(data);
+				break;
+			case "participants":
+				this.processRoomParticipantsEvent(data);
 				break;
 			default:
 				console.log("Unsupported event target", data);
@@ -825,15 +866,6 @@
 					}
 					this._trigger("usersLeft", [leftSessionIds]);
 				}
-				break;
-			case "change":
-				var changedUsers = data.event.change;
-				if (changedUsers.length) {
-					console.log("Users changed", changedUsers);
-					var sessionIds = _.pluck(changedUsers, "sessionid");
-					this._trigger("usersChanged", sessionIds);
-				}
-				this.internalSyncRooms();
 				break;
 			default:
 				console.log("Unknown room event", data);
@@ -879,6 +911,18 @@
 	StandaloneSignaling.prototype.processRoomListEvent = function(data) {
 		console.log("Room list event", data);
 		this.internalSyncRooms();
+	};
+
+	StandaloneSignaling.prototype.processRoomParticipantsEvent = function(data) {
+		switch (data.event.type) {
+			case "update":
+				this._trigger("usersChanged", [data.event.update.users]);
+				this.internalSyncRooms();
+				break;
+			default:
+				console.log("Unknown room participant event", data);
+				break;
+		}
 	};
 
 	OCA.SpreedMe.createSignalingConnection = function() {

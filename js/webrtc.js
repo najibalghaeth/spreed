@@ -11,6 +11,7 @@ var spreedPeerConnectionTable = [];
 	OCA.SpreedMe = OCA.SpreedMe || {};
 
 	var previousUsersInRoom = [];
+	var usersInCallMapping = {};
 
 	function updateParticipantsUI(currentUsersNo) {
 		'use strict';
@@ -108,6 +109,53 @@ var spreedPeerConnectionTable = [];
 		updateParticipantsUI(previousUsersInRoom.length + 1);
 	}
 
+	function usersInCallChanged(users) {
+		// The passed list are the users that are currently in the room,
+		// i.e. that are in the call and should call each other.
+		var currentSessionId = webrtc.connection.getSessionid();
+		var currentUsersInRoom = [];
+		var userMapping = {};
+		var selfInCall = false;
+		var sessionId;
+		console.log("Call changed", users, currentSessionId);
+		for (sessionId in users) {
+			if (!users.hasOwnProperty(sessionId)) {
+				continue;
+			}
+			var user = users[sessionId];
+			if (!user.inCall) {
+				continue;
+			}
+
+			if (sessionId === currentSessionId) {
+				console.log("Self in call");
+				selfInCall = true;
+				continue;
+			}
+
+			currentUsersInRoom.push(sessionId);
+			userMapping[sessionId] = user;
+		}
+
+		if (!selfInCall) {
+			// Own session is no longer in the call, disconnect from all others.
+			usersChanged([], previousUsersInRoom);
+			return;
+		}
+
+		console.log("In room", currentUsersInRoom, userMapping, previousUsersInRoom);
+		var newSessionIds = currentUsersInRoom.diff(previousUsersInRoom);
+		var disconnectedSessionIds = previousUsersInRoom.diff(currentUsersInRoom);
+		var newUsers = [];
+		newSessionIds.forEach(function(sessionId) {
+			newUsers.push(userMapping[sessionId]);
+		});
+		console.log("Changed", newUsers, disconnectedSessionIds);
+		if (newUsers.length || disconnectedSessionIds.length) {
+			usersChanged(newUsers, disconnectedSessionIds);
+		}
+	}
+
 	function initWebRTC() {
 		'use strict';
 		Array.prototype.diff = function(a) {
@@ -118,45 +166,25 @@ var spreedPeerConnectionTable = [];
 
 		var signaling = OCA.SpreedMe.createSignalingConnection();
 		signaling.on('usersLeft', function(users) {
+			users.forEach(function(user) {
+				delete usersInCallMapping[user];
+			})
 			usersChanged([], users);
 		});
-		signaling.on('usersInRoom', function(users) {
-			// The passed list are the users that are currently in the room,
-			// i.e. that are in the call and should call each other.
-			var currentSessionId = webrtc.connection.getSessionid();
-			var currentUsersInRoom = [];
-			var userMapping = {};
-			var selfInCall = false;
+		signaling.on('usersChanged', function(users) {
 			users.forEach(function(user) {
-				if (!user['inCall']) {
-					return;
-				}
-
-				var sessionId = user['sessionId'] || user.sessionid;
-				if (sessionId === currentSessionId) {
-					selfInCall = true;
-					return;
-				}
-
-				currentUsersInRoom.push(sessionId);
-				userMapping[sessionId] = user;
+				var sessionId = user.sessionId || user.sessionid;
+				usersInCallMapping[sessionId] = user;
 			});
-
-			if (!selfInCall) {
-				// Own session is no longer in the call, disconnect from all others.
-				usersChanged([], previousUsersInRoom);
-				return;
-			}
-
-			var newSessionIds = currentUsersInRoom.diff(previousUsersInRoom);
-			var disconnectedSessionIds = previousUsersInRoom.diff(currentUsersInRoom);
-			var newUsers = [];
-			newSessionIds.forEach(function(sessionId) {
-				newUsers.push(userMapping[sessionId]);
+			usersInCallChanged(usersInCallMapping);
+		});
+		signaling.on('usersInRoom', function(users) {
+			usersInCallMapping = {};
+			users.forEach(function(user) {
+				var sessionId = user.sessionId || user.sessionid;
+				usersInCallMapping[sessionId] = user;
 			});
-			if (newUsers.length || disconnectedSessionIds.length) {
-				usersChanged(newUsers, disconnectedSessionIds);
-			}
+			usersInCallChanged(usersInCallMapping);
 		});
 
 		var nick = OC.getCurrentUser()['displayName'];
