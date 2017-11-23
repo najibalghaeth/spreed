@@ -209,14 +209,21 @@ class BackendNotifier{
 	public function roomInCallChanged($room, $inCall, $sessionIds) {
 		$this->logger->info('Room in-call status changed: ' . $room->getToken() . ' ' . $inCall . ' ' . print_r($sessionIds, true));
 		$changed = [];
+		$users = [];
 		$participants = $room->getParticipants();
 		foreach ($participants['users'] as $userId => $participant) {
+			if ($participant['inCall']) {
+				$users[] = $participant;
+			}
 			if (in_array($participant['sessionId'], $sessionIds)) {
 				$participant['userId'] = $userId;
 				$changed[] = $participant;
 			}
 		}
 		foreach ($participants['guests'] as $participant) {
+			if ($participant['inCall']) {
+				$users[] = $participant;
+			}
 			if (in_array($participant['sessionId'], $sessionIds)) {
 				$changed[] = $participant;
 			}
@@ -226,7 +233,8 @@ class BackendNotifier{
 			'type' => 'incall',
 			'incall' => [
 				'incall' => $inCall,
-				'users' => $changed,
+				'changed' => $changed,
+				'users' => $users
 			],
 		]);
 	}
